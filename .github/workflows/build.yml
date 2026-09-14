@@ -1,0 +1,796 @@
+name: Build iBaalSign Modul 1 (Liquid UI & Share Sheet)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iBaalSign IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Switch to Xcode 15.4
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install Dependencies
+        run: brew install xcodegen ldid
+
+      - name: Generate App Icon & Assets
+        run: |
+          pip3 install pillow
+          python3 - << 'EOF'
+          from PIL import Image, ImageDraw
+          import os, json
+
+          # Canvas Icon 1024x1024
+          img = Image.new("RGBA", (1024, 1024))
+          draw = ImageDraw.Draw(img)
+
+          # Background Gradient (OLED Black to Deep Indigo)
+          for y in range(1024):
+              r = int(12 + (20 - 12) * (y / 1024))
+              g = int(14 + (28 - 14) * (y / 1024))
+              b = int(24 + (55 - 24) * (y / 1024))
+              draw.line([(0, y), (1024, y)], fill=(r, g, b, 255))
+
+          # Lingkaran Cahaya Liquid Cyan
+          draw.ellipse([262, 262, 762, 762], fill=(0, 210, 255, 35), outline=(0, 220, 255, 180), width=6)
+          
+          # Simbol Signature / Pen Signer (Minimalis Liquid Tech)
+          draw.rounded_rectangle([472, 280, 552, 640], radius=24, fill=(0, 230, 200, 255))
+          draw.polygon([(472, 640), (552, 640), (512, 740)], fill=(0, 230, 200, 255))
+          draw.ellipse([497, 725, 527, 755], fill=(12, 14, 24, 255))
+
+          iconset_path = "Sources/Assets.xcassets/AppIcon.appiconset"
+          os.makedirs(iconset_path, exist_ok=True)
+          img.convert("RGB").save(f"{iconset_path}/icon_1024.png")
+
+          contents = {
+              "images": [{"filename": "icon_1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+              "info": {"author": "xcode", "version": 1}
+          }
+          with open(f"{iconset_path}/Contents.json", "w") as f:
+              json.dump(contents, f, indent=2)
+          EOF
+
+      - name: Auto-Generate Source Code (Liquid SwiftUI & Share Engine)
+        run: |
+          mkdir -p Sources
+
+          # 1. Native LaunchScreen Storyboard (No Zoom)
+          cat << 'EOF' > Sources/LaunchScreen.storyboard
+          <?xml version="1.0" encoding="UTF-8"?>
+          <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="22505" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+              <device id="retina6_12" orientation="portrait" appearance="light"/>
+              <dependencies>
+                  <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="22504"/>
+                  <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+                  <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+              </dependencies>
+              <scenes>
+                  <scene sceneID="EHf-IW-A2E">
+                      <objects>
+                          <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+                              <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+                                  <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                                  <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                                  <color key="backgroundColor" red="0.05" green="0.06" blue="0.08" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                              </view>
+                          </viewController>
+                          <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+                      </objects>
+                      <point key="canvasLocation" x="53" y="375"/>
+                  </scene>
+              </scenes>
+          </document>
+          EOF
+
+          # 2. State & File Manager Engine
+          cat << 'EOF' > Sources/AppStateManager.swift
+          import SwiftUI
+          import UniformTypeIdentifiers
+
+          class AppStateManager: ObservableObject {
+              @Published var targetIPAName: String = "Belum memilih file .IPA"
+              @Published var targetIPAURL: URL? = nil
+              
+              // App Configuration
+              @Published var appName: String = ""
+              @Published var bundleID: String = ""
+              @Published var appVersion: String = "1.0"
+              
+              // Toggles Configuration
+              @Published var installAfterSign: Bool = true
+              @Published var enableFileAccess: Bool = true
+              @Published var removeURLSchemes: Bool = false
+              @Published var removeEmbeddedPlugins: Bool = true
+              @Published var autoCleanImports: Bool = true
+              @Published var deleteOriginalAfterImport: Bool = false
+              
+              // Tweak List (.dylib / .deb)
+              @Published var injectedTweaks: [String] = []
+              
+              // Files List di Documents
+              @Published var importedFiles: [URL] = []
+              
+              // Alert & Notification
+              @Published var alertTitle: String = ""
+              @Published var alertMessage: String = ""
+              @Published var showAlert: Bool = false
+              
+              init() {
+                  refreshDocuments()
+              }
+              
+              func refreshDocuments() {
+                  let fm = FileManager.default
+                  guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+                  if let urls = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                      self.importedFiles = urls.filter { !$0.lastPathComponent.hasPrefix("Inbox") }
+                  }
+              }
+              
+              // Handler Share Sheet dari Telegram / Safari / Files
+              func handleIncomingURL(_ url: URL) {
+                  let isAccessSecured = url.startAccessingSecurityScopedResource()
+                  defer {
+                      if isAccessSecured { url.stopAccessingSecurityScopedResource() }
+                  }
+                  
+                  let fm = FileManager.default
+                  guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+                  let destURL = docs.appendingPathComponent(url.lastPathComponent)
+                  
+                  do {
+                      if fm.fileExists(atPath: destURL.path) {
+                          try fm.removeItem(at: destURL)
+                      }
+                      try fm.copyItem(at: url, to: destURL)
+                      
+                      let ext = destURL.pathExtension.lowercased()
+                      
+                      DispatchQueue.main.async {
+                          self.refreshDocuments()
+                          
+                          if ext == "ipa" {
+                              self.targetIPAURL = destURL
+                              self.targetIPAName = destURL.lastPathComponent
+                              self.appName = destURL.deletingPathExtension().lastPathComponent
+                              self.bundleID = "com.ibaalsign." + self.appName.lowercased().replacingOccurrences(of: " ", with: "")
+                              self.showAlert(title: "IPA Diterima! 🚀", message: "\(destURL.lastPathComponent) siap dikonfigurasi.")
+                          } else if ext == "dylib" || ext == "deb" {
+                              if !self.injectedTweaks.contains(destURL.lastPathComponent) {
+                                  self.injectedTweaks.append(destURL.lastPathComponent)
+                              }
+                              self.showAlert(title: "Tweak Ditambahkan! 💉", message: "\(destURL.lastPathComponent) dimasukkan ke daftar injeksi Frameworks.")
+                          } else if ext == "zip" || ext == "p12" || ext == "mobileprovision" {
+                              self.showAlert(title: "Sertifikat Disimpan! 🔑", message: "\(destURL.lastPathComponent) berhasil diimpor ke tab Files.")
+                          } else {
+                              self.showAlert(title: "Berkas Diterima", message: "\(destURL.lastPathComponent) disimpan.")
+                          }
+                      }
+                  } catch {
+                      DispatchQueue.main.async {
+                          self.showAlert(title: "Gagal Impor", message: error.localizedDescription)
+                      }
+                  }
+              }
+              
+              func showAlert(title: String, message: String) {
+                  self.alertTitle = title
+                  self.alertMessage = message
+                  self.showAlert = true
+              }
+          }
+          EOF
+
+          # 3. Entry Point App dengan URL Handler
+          cat << 'EOF' > Sources/iBaalSignApp.swift
+          import SwiftUI
+
+          @main
+          struct iBaalSignApp: App {
+              @StateObject var state = AppStateManager()
+              
+              var body: some Scene {
+                  WindowGroup {
+                      MainTabView()
+                          .environmentObject(state)
+                          .onOpenURL { incomingURL in
+                              state.handleIncomingURL(incomingURL)
+                          }
+                  }
+              }
+          }
+          EOF
+
+          # 4. Antarmuka Liquid Glass (LCSign Aesthetic)
+          cat << 'EOF' > Sources/MainViews.swift
+          import SwiftUI
+          import UniformTypeIdentifiers
+
+          // MARK: - Palet Warna Liquid LCSign
+          extension Color {
+              static let lcsDark = Color(red: 0.05, green: 0.06, blue: 0.08)
+              static let lcsCard = Color(red: 0.10, green: 0.11, blue: 0.14)
+              static let lcsStroke = Color.white.opacity(0.07)
+              static let lcsCyan = Color(red: 0.0, green: 0.85, blue: 0.95)
+              static let lcsGreen = Color(red: 0.20, green: 0.82, blue: 0.45)
+          }
+
+          // MARK: - Komponen Pill Badge Status
+          struct StatusBadge: View {
+              let text: String
+              let tint: Color
+              var body: some View {
+                  Text(text)
+                      .font(.system(size: 11, weight: .bold))
+                      .foregroundColor(tint)
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 4)
+                      .background(tint.opacity(0.16))
+                      .clipShape(Capsule())
+              }
+          }
+
+          // MARK: - Kartu Frosted Glass
+          struct LiquidCard<Content: View>: View {
+              let content: Content
+              init(@ViewBuilder content: () -> Content) { self.content = content() }
+              
+              var body: some View {
+                  VStack(alignment: .leading, spacing: 12) {
+                      content
+                  }
+                  .padding(16)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .background(Color.lcsCard)
+                  .cornerRadius(20)
+                  .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.lcsStroke, lineWidth: 1))
+              }
+          }
+
+          // MARK: - Tampilan Utama Beranda & Projects
+          struct MainTabView: View {
+              @EnvironmentObject var state: AppStateManager
+              @State private var currentTab = 0
+              
+              var body: some View {
+                  ZStack(alignment: .bottom) {
+                      Color.lcsDark.ignoresSafeArea()
+                      
+                      TabView(selection: $currentTab) {
+                          ProjectsView()
+                              .tag(0)
+                          AppsView()
+                              .tag(1)
+                          FilesView()
+                              .tag(2)
+                          SettingsView()
+                              .tag(3)
+                      }
+                      .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+                      
+                      // Floating Bottom Bar (Mirip LCSign)
+                      HStack {
+                          BarButton(icon: "cube.box.fill", name: "Projects", isSelected: currentTab == 0) { currentTab = 0 }
+                          BarButton(icon: "square.stack.3d.up.fill", name: "Apps", isSelected: currentTab == 1) { currentTab = 1 }
+                          BarButton(icon: "folder.fill", name: "Files", isSelected: currentTab == 2) { currentTab = 2 }
+                          BarButton(icon: "gearshape.fill", name: "Settings", isSelected: currentTab == 3) { currentTab = 3 }
+                      }
+                      .padding(.vertical, 10)
+                      .background(Color.lcsCard.opacity(0.96))
+                      .clipShape(Capsule())
+                      .overlay(Capsule().stroke(Color.lcsStroke, lineWidth: 1))
+                      .padding(.horizontal, 24)
+                      .padding(.bottom, 10)
+                  }
+                  .alert(isPresented: $state.showAlert) {
+                      Alert(title: Text(state.alertTitle), message: Text(state.alertMessage), dismissButton: .default(Text("OK")))
+                  }
+              }
+          }
+
+          struct BarButton: View {
+              let icon: String
+              let name: String
+              let isSelected: Bool
+              let action: () -> Void
+              
+              var body: some View {
+                  Button(action: action) {
+                      VStack(spacing: 3) {
+                          Image(systemName: icon)
+                              .font(.system(size: 17))
+                          Text(name)
+                              .font(.system(size: 10, weight: .semibold))
+                      }
+                      .foregroundColor(isSelected ? .lcsCyan : .gray)
+                      .frame(maxWidth: .infinity)
+                  }
+              }
+          }
+
+          // MARK: - Tab Projects & App Configuration
+          struct ProjectsView: View {
+              @EnvironmentObject var state: AppStateManager
+              @State private var showDocPicker = false
+              @State private var showTweakPicker = false
+              
+              var body: some View {
+                  ScrollView {
+                      VStack(spacing: 16) {
+                          // Top Bar
+                          HStack {
+                              VStack(alignment: .leading, spacing: 2) {
+                                  Text("iBaalSign")
+                                      .font(.system(size: 24, weight: .black, design: .rounded))
+                                      .foregroundColor(.white)
+                                  Text("Ready for Telegram & Files Injection")
+                                      .font(.system(size: 12))
+                                      .foregroundColor(.gray)
+                              }
+                              Spacer()
+                              StatusBadge(text: "MODUL 1 READY", tint: .lcsCyan)
+                          }
+                          .padding(.horizontal, 20)
+                          .padding(.top, 10)
+
+                          // 1. Target Application
+                          LiquidCard {
+                              HStack {
+                                  Image(systemName: "app.gift.fill")
+                                      .foregroundColor(.lcsCyan)
+                                  Text("TARGET APPLICATION (.IPA)")
+                                      .font(.system(size: 12, weight: .bold))
+                                      .foregroundColor(.gray)
+                                  Spacer()
+                              }
+                              
+                              HStack {
+                                  Text(state.targetIPAName)
+                                      .font(.system(size: 15, weight: .semibold))
+                                      .foregroundColor(.white)
+                                      .lineLimit(1)
+                                  Spacer()
+                                  Button(action: { showDocPicker = true }) {
+                                      Text("Pilih")
+                                          .font(.system(size: 12, weight: .bold))
+                                          .foregroundColor(.black)
+                                          .padding(.horizontal, 14)
+                                          .padding(.vertical, 6)
+                                          .background(Color.lcsCyan)
+                                          .clipShape(Capsule())
+                                  }
+                              }
+                          }
+                          .padding(.horizontal, 16)
+
+                          // 2. App Configuration (Modify Name, Bundle ID, Version)
+                          LiquidCard {
+                              Text("APP CONFIGURATION")
+                                  .font(.system(size: 12, weight: .bold))
+                                  .foregroundColor(.gray)
+                              
+                              VStack(spacing: 10) {
+                                  HStack {
+                                      Text("Name:")
+                                          .font(.system(size: 13, weight: .medium))
+                                          .foregroundColor(.gray)
+                                          .frame(width: 70, alignment: .leading)
+                                      TextField("Contoh: WhatsApp Mod", text: $state.appName)
+                                          .foregroundColor(.white)
+                                  }
+                                  Divider().background(Color.white.opacity(0.05))
+                                  HStack {
+                                      Text("Bundle ID:")
+                                          .font(.system(size: 13, weight: .medium))
+                                          .foregroundColor(.gray)
+                                          .frame(width: 70, alignment: .leading)
+                                      TextField("com.mod.app", text: $state.bundleID)
+                                          .foregroundColor(.lcsCyan)
+                                          .font(.system(size: 13, design: .monospaced))
+                                  }
+                                  Divider().background(Color.white.opacity(0.05))
+                                  HStack {
+                                      Text("Version:")
+                                          .font(.system(size: 13, weight: .medium))
+                                          .foregroundColor(.gray)
+                                          .frame(width: 70, alignment: .leading)
+                                      TextField("1.0.0", text: $state.appVersion)
+                                          .foregroundColor(.white)
+                                  }
+                              }
+                              .padding(12)
+                              .background(Color.white.opacity(0.03))
+                              .cornerRadius(12)
+                          }
+                          .padding(.horizontal, 16)
+
+                          // 3. Tweak Injection Section (.dylib / .deb)
+                          LiquidCard {
+                              HStack {
+                                  Image(systemName: "puzzlepiece.extension.fill")
+                                      .foregroundColor(.orange)
+                                  Text("SUNTIK TWEAK (.DYLIB / .DEB)")
+                                      .font(.system(size: 12, weight: .bold))
+                                      .foregroundColor(.gray)
+                                  Spacer()
+                                  Button(action: { showTweakPicker = true }) {
+                                      Image(systemName: "plus.circle.fill")
+                                          .foregroundColor(.orange)
+                                          .font(.system(size: 20))
+                                  }
+                              }
+                              
+                              if state.injectedTweaks.isEmpty {
+                                  Text("Belum ada tweak. Bagikan dari Telegram atau tap (+).")
+                                      .font(.system(size: 12))
+                                      .foregroundColor(.gray.opacity(0.6))
+                                      .padding(.vertical, 4)
+                              } else {
+                                  ForEach(state.injectedTweaks, id: \.self) { tweak in
+                                      HStack {
+                                          Image(systemName: "doc.badge.gearshape.fill")
+                                              .foregroundColor(.white.opacity(0.7))
+                                              .font(.system(size: 13))
+                                          Text(tweak)
+                                              .font(.system(size: 12, design: .monospaced))
+                                              .foregroundColor(.white)
+                                          Spacer()
+                                          Text("Frameworks/")
+                                              .font(.system(size: 10))
+                                              .foregroundColor(.gray)
+                                          Button(action: {
+                                              state.injectedTweaks.removeAll { $0 == tweak }
+                                          }) {
+                                              Image(systemName: "trash")
+                                                  .foregroundColor(.red.opacity(0.8))
+                                                  .font(.system(size: 12))
+                                          }
+                                      }
+                                      .padding(10)
+                                      .background(Color.white.opacity(0.03))
+                                      .cornerRadius(10)
+                                  }
+                              }
+                          }
+                          .padding(.horizontal, 16)
+
+                          // 4. Advanced Toggles
+                          LiquidCard {
+                              Text("OPTIONS & TOGGLES")
+                                  .font(.system(size: 12, weight: .bold))
+                                  .foregroundColor(.gray)
+                              
+                              ToggleRow(title: "Install after signing", subtitle: "Buka prompt TrollStore otomatis", isOn: $state.installAfterSign, tint: .lcsGreen)
+                              Divider().background(Color.white.opacity(0.05))
+                              ToggleRow(title: "Enable File Access (Documents)", subtitle: "Akses folder app lewat Files", isOn: $state.enableFileAccess, tint: .blue)
+                              Divider().background(Color.white.opacity(0.05))
+                              ToggleRow(title: "Remove URL Schemes", subtitle: "Cegah tabrakan dengan app AppStore", isOn: $state.removeURLSchemes, tint: .orange)
+                              Divider().background(Color.white.opacity(0.05))
+                              ToggleRow(title: "Remove Embedded Plugins", subtitle: "Hapus Watch/PlugIns agar biner ringan", isOn: $state.removeEmbeddedPlugins, tint: .purple)
+                              Divider().background(Color.white.opacity(0.05))
+                              ToggleRow(title: "Auto Clean Import Files", subtitle: "Hapus cache sementara setelah sign", isOn: $state.autoCleanImports, tint: .pink)
+                          }
+                          .padding(.horizontal, 16)
+
+                          // Action Button
+                          Button(action: {
+                              state.showAlert(title: "Konfigurasi Disimpan!", message: "Target: \(state.appName)\nBundle ID: \(state.bundleID)\nTweaks: \(state.injectedTweaks.count) file siap disuntik.\n\n(Mesin Signing zsign C++ akan dieksekusi di Modul 2!)")
+                          }) {
+                              HStack {
+                                  Image(systemName: "signature")
+                                      .font(.system(size: 16, weight: .bold))
+                                  Text("PROCESS & VERIFY CONFIG")
+                                      .font(.system(size: 15, weight: .bold))
+                              }
+                              .foregroundColor(.black)
+                              .frame(maxWidth: .infinity)
+                              .frame(height: 52)
+                              .background(Color.lcsCyan)
+                              .cornerRadius(16)
+                              .shadow(color: Color.lcsCyan.opacity(0.3), radius: 10, y: 4)
+                          }
+                          .padding(.horizontal, 16)
+                          .padding(.top, 4)
+
+                          Spacer().frame(height: 90)
+                      }
+                  }
+                  .sheet(isPresented: $showDocPicker) {
+                      GenericDocPicker(types: [.data, .item]) { pickedURL in
+                          state.handleIncomingURL(pickedURL)
+                      }
+                  }
+                  .sheet(isPresented: $showTweakPicker) {
+                      GenericDocPicker(types: [.data, .item]) { pickedURL in
+                          state.handleIncomingURL(pickedURL)
+                      }
+                  }
+              }
+          }
+
+          struct ToggleRow: View {
+              let title: String
+              let subtitle: String
+              @Binding var isOn: Bool
+              let tint: Color
+              
+              var body: some View {
+                  HStack {
+                      VStack(alignment: .leading, spacing: 2) {
+                          Text(title)
+                              .font(.system(size: 13, weight: .semibold))
+                              .foregroundColor(.white)
+                          Text(subtitle)
+                              .font(.system(size: 10))
+                              .foregroundColor(.gray)
+                      }
+                      Spacer()
+                      Toggle("", isOn: $isOn)
+                          .labelsHidden()
+                          .toggleStyle(SwitchToggleStyle(tint: tint))
+                  }
+              }
+          }
+
+          // MARK: - Tab Apps
+          struct AppsView: View {
+              @EnvironmentObject var state: AppStateManager
+              var body: some View {
+                  VStack(spacing: 12) {
+                      Text("Signed Applications")
+                          .font(.system(size: 20, weight: .bold))
+                          .foregroundColor(.white)
+                          .padding(.top, 20)
+                      Text("Aplikasi yang sudah di-sign akan muncul di sini dan siap dipasang via TrollStore.")
+                          .font(.system(size: 12))
+                          .foregroundColor(.gray)
+                          .multilineTextAlignment(.center)
+                          .padding(.horizontal, 30)
+                      Spacer()
+                  }
+                  .frame(maxWidth: .infinity)
+                  .background(Color.lcsDark.ignoresSafeArea())
+              }
+          }
+
+          // MARK: - Tab Files
+          struct FilesView: View {
+              @EnvironmentObject var state: AppStateManager
+              
+              var body: some View {
+                  VStack(alignment: .leading, spacing: 14) {
+                      HStack {
+                          Text("Imported Files")
+                              .font(.system(size: 22, weight: .bold))
+                              .foregroundColor(.white)
+                          Spacer()
+                          Button("Refresh") { state.refreshDocuments() }
+                              .font(.system(size: 12, weight: .bold))
+                              .foregroundColor(.lcsCyan)
+                      }
+                      .padding(.horizontal, 20)
+                      .padding(.top, 20)
+                      
+                      if state.importedFiles.isEmpty {
+                          VStack(spacing: 10) {
+                              Spacer()
+                              Image(systemName: "tray.fill")
+                                  .font(.system(size: 40))
+                                  .foregroundColor(.gray.opacity(0.5))
+                              Text("Belum ada file di folder Documents.\nBagikan file dari Telegram atau Safari untuk melihatnya di sini.")
+                                  .font(.system(size: 12))
+                                  .foregroundColor(.gray)
+                                  .multilineTextAlignment(.center)
+                              Spacer()
+                          }
+                          .frame(maxWidth: .infinity)
+                      } else {
+                          List {
+                              ForEach(state.importedFiles, id: \.self) { file in
+                                  HStack {
+                                      Image(systemName: fileIcon(file.pathExtension))
+                                          .foregroundColor(.lcsCyan)
+                                      VStack(alignment: .leading, spacing: 2) {
+                                          Text(file.lastPathComponent)
+                                              .font(.system(size: 13, weight: .medium))
+                                              .foregroundColor(.white)
+                                          Text(fileSize(file))
+                                              .font(.system(size: 10))
+                                              .foregroundColor(.gray)
+                                      }
+                                  }
+                                  .listRowBackground(Color.lcsCard)
+                              }
+                              .onDelete { indices in
+                                  for i in indices {
+                                      let file = state.importedFiles[i]
+                                      try? FileManager.default.removeItem(at: file)
+                                  }
+                                  state.refreshDocuments()
+                              }
+                          }
+                          .listStyle(PlainListStyle())
+                      }
+                  }
+                  .background(Color.lcsDark.ignoresSafeArea())
+              }
+              
+              func fileIcon(_ ext: String) -> String {
+                  switch ext.lowercased() {
+                  case "ipa": return "app.gift.fill"
+                  case "dylib", "deb": return "puzzlepiece.extension.fill"
+                  case "zip": return "doc.zipper"
+                  case "p12", "mobileprovision": return "key.fill"
+                  default: return "doc.fill"
+                  }
+              }
+              
+              func fileSize(_ url: URL) -> String {
+                  if let res = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = res.fileSize {
+                      return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+                  }
+                  return "0 KB"
+              }
+          }
+
+          // MARK: - Tab Settings
+          struct SettingsView: View {
+              @EnvironmentObject var state: AppStateManager
+              var body: some View {
+                  ScrollView {
+                      VStack(spacing: 16) {
+                          Text("Settings")
+                              .font(.system(size: 22, weight: .bold))
+                              .foregroundColor(.white)
+                              .frame(maxWidth: .infinity, alignment: .leading)
+                              .padding(.horizontal, 20)
+                              .padding(.top, 20)
+
+                          LiquidCard {
+                              Text("ABOUT")
+                                  .font(.system(size: 12, weight: .bold))
+                                  .foregroundColor(.gray)
+                              Text("iBaalSign On-Device Engine v1.0\nDibangun khusus untuk performa tinggi, privasi penuh, dan fleksibilitas modding iOS tanpa komputer.")
+                                  .font(.system(size: 13))
+                                  .foregroundColor(.white.opacity(0.8))
+                          }
+                          .padding(.horizontal, 16)
+
+                          Button(action: {
+                              let fm = FileManager.default
+                              guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+                              if let items = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
+                                  for item in items { try? fm.removeItem(at: item) }
+                              }
+                              state.refreshDocuments()
+                              state.showAlert(title: "Bersih!", message: "Semua file cache telah dikosongkan.")
+                          }) {
+                              HStack {
+                                  Image(systemName: "trash.fill")
+                                  Text("Bersihkan Seluruh Cache Dokumen")
+                                      .font(.system(size: 13, weight: .bold))
+                              }
+                              .foregroundColor(.red)
+                              .frame(maxWidth: .infinity)
+                              .frame(height: 48)
+                              .background(Color.red.opacity(0.15))
+                              .cornerRadius(14)
+                          }
+                          .padding(.horizontal, 16)
+                          
+                          Spacer().frame(height: 90)
+                      }
+                  }
+                  .background(Color.lcsDark.ignoresSafeArea())
+              }
+          }
+
+          // MARK: - Picker Representable
+          struct GenericDocPicker: UIViewControllerRepresentable {
+              let types: [UTType]
+              let onPick: (URL) -> Void
+              
+              func makeCoordinator() -> Coordinator { Coordinator(self) }
+              func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+                  let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+                  picker.delegate = context.coordinator
+                  return picker
+              }
+              func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+              
+              class Coordinator: NSObject, UIDocumentPickerDelegate {
+                  var parent: GenericDocPicker
+                  init(_ parent: GenericDocPicker) { self.parent = parent }
+                  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+                      guard let url = urls.first else { return }
+                      parent.onPick(url)
+                  }
+              }
+          }
+          EOF
+
+          # 5. Project YAML Configuration (Dengan Document Types untuk Share Sheet Telegram)
+          cat << 'EOF' > project.yml
+          name: iBaalSign
+          options:
+            bundleIdPrefix: com.ibaalpremium
+          targets:
+            iBaalSign:
+              type: application
+              platform: iOS
+              deploymentTarget: "15.0"
+              sources:
+                - path: Sources
+              settings:
+                PRODUCT_BUNDLE_IDENTIFIER: com.ibaalpremium.ibaalsign
+                MARKETING_VERSION: "1.0"
+                CURRENT_PROJECT_VERSION: "1"
+                SWIFT_VERSION: "5.0"
+                GENERATE_INFOPLIST_FILE: "YES"
+                INFOPLIST_KEY_UILaunchStoryboardName: "LaunchScreen"
+                INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+                INFOPLIST_KEY_UIFileSharingEnabled: "YES"
+                INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: "YES"
+                ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
+                CODE_SIGN_IDENTITY: ""
+                CODE_SIGNING_REQUIRED: "NO"
+                CODE_SIGNING_ALLOWED: "NO"
+          EOF
+
+      - name: Generate Xcode Project & Fix Format
+        run: |
+          xcodegen generate
+          sed -i '' 's/objectVersion = 77;/objectVersion = 63;/g' iBaalSign.xcodeproj/project.pbxproj
+
+      - name: Build Application (Unsigned)
+        run: |
+          xcodebuild clean build \
+            -project iBaalSign.xcodeproj \
+            -scheme iBaalSign \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath ./build_output \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Inject Telegram Share Sheet (Document Types) & Package IPA
+        run: |
+          mkdir -p Payload
+          cp -r ./build_output/Build/Products/Release-iphoneos/iBaalSign.app Payload/
+
+          # INJEKSI DOKUMEN TYPE SHARE SHEET TELEGRAM KE INFO.PLIST
+          PLIST="Payload/iBaalSign.app/Info.plist"
+          
+          # Daftarkan penanganan file .ipa, .dylib, .deb, .zip, .p12, .mobileprovision
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes array" "$PLIST" 2>/dev/null || true
+          
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string 'Package File'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string 'Viewer'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string 'Owner'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string 'public.data'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string 'public.archive'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:2 string 'public.content'" "$PLIST"
+
+          chmod +x Payload/iBaalSign.app/iBaalSign
+          ldid -S Payload/iBaalSign.app/iBaalSign
+          zip -qr iBaalSign.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iBaalSign-v1.0-IPA
+          path: iBaalSign.ipa
