@@ -1,4 +1,4 @@
-name: Build iBaalSign (Fix Liquid Pill Layout)
+name: Build iBaalSign (Cert in Settings Tab)
 
 on:
   push:
@@ -55,7 +55,7 @@ jobs:
               json.dump(contents, f, indent=2)
           EOF
 
-      - name: Auto-Generate Source Code (Fixed Liquid Glass UI)
+      - name: Auto-Generate Source Code (Cert Manager in Settings)
         run: |
           mkdir -p Sources
 
@@ -167,6 +167,7 @@ jobs:
                   enableFileSharing: Bool,
                   p12URL: URL?,
                   provisionURL: URL?,
+                  p12Password: String,
                   progress: @escaping (String) -> Void,
                   completion: @escaping (Result<URL, Error>) -> Void
               ) {
@@ -243,7 +244,7 @@ jobs:
                           }
                           
                           if let prov = provisionURL {
-                              progress("Menanamkan provision profile...")
+                              progress("Menanamkan embedded.mobileprovision...")
                               let destProv = appDir.appendingPathComponent("embedded.mobileprovision")
                               if fm.fileExists(atPath: destProv.path) { try? fm.removeItem(at: destProv) }
                               try? fm.copyItem(at: prov, to: destProv)
@@ -304,18 +305,22 @@ jobs:
               @Published var bundleID: String = ""
               @Published var appVersion: String = "1.0"
               
-              @Published var installAfterSign: Bool = false
               @Published var enableFileAccess: Bool = true
               @Published var removeURLSchemes: Bool = false
               @Published var removeEmbeddedPlugins: Bool = true
-              @Published var autoCleanImports: Bool = true
               
               @Published var injectedTweaks: [URL] = []
               @Published var importedFiles: [URL] = []
               @Published var signedApps: [SignedAppItem] = []
               
+              // Certificate Management (Diatur di Tab Settings)
               @Published var selectedP12: URL? = nil
               @Published var selectedProvision: URL? = nil
+              @Published var p12Password: String = "1"
+              
+              var hasActiveCert: Bool {
+                  return selectedP12 != nil && selectedProvision != nil
+              }
               
               @Published var isProcessing: Bool = false
               @Published var progressMessage: String = ""
@@ -408,10 +413,10 @@ jobs:
                               self.showAlert(title: "Tweak Diterima! 💉", message: "\(destURL.lastPathComponent) siap disuntikkan.")
                           } else if ext == "p12" {
                               self.selectedP12 = destURL
-                              self.showAlert(title: "Sertifikat P12 🔑", message: "Sertifikat P12 berhasil dipilih.")
+                              self.showAlert(title: "P12 Disimpan! 🔑", message: "Sertifikat aktif terpasang di Settings.")
                           } else if ext == "mobileprovision" {
                               self.selectedProvision = destURL
-                              self.showAlert(title: "Provision Profile 📄", message: "Provisioning profile terpasang.")
+                              self.showAlert(title: "Provision Profile 📄", message: "Provisioning profile terpasang di Settings.")
                           }
                       }
                   } catch {
@@ -441,6 +446,7 @@ jobs:
                       enableFileSharing: enableFileAccess,
                       p12URL: selectedP12,
                       provisionURL: selectedProvision,
+                      p12Password: p12Password,
                       progress: { msg in
                           DispatchQueue.main.async { self.progressMessage = msg }
                       },
@@ -495,7 +501,7 @@ jobs:
           }
           EOF
 
-          # 6. Perbaikan Antarmuka Liquid Glass (Terkunci Presisi di Bawah)
+          # 6. Liquid Glass UI (Cert Manager di Tab Settings)
           cat << 'EOF' > Sources/MainViews.swift
           import SwiftUI
           import UniformTypeIdentifiers
@@ -505,6 +511,7 @@ jobs:
               static let lcsCard = Color(red: 0.09, green: 0.10, blue: 0.14)
               static let lcsCyan = Color(red: 0.0, green: 0.88, blue: 0.98)
               static let lcsAccent = Color(red: 0.15, green: 0.55, blue: 1.0)
+              static let lcsGreen = Color(red: 0.20, green: 0.82, blue: 0.45)
           }
 
           struct ActivityView: UIViewControllerRepresentable {
@@ -568,14 +575,14 @@ jobs:
                       Color.lcsOled.ignoresSafeArea()
                       
                       TabView(selection: $currentTab) {
-                          ProjectsView().tag(0)
+                          ProjectsView(onGoToSettings: { currentTab = 3 }).tag(0)
                           AppsView().tag(1)
                           FilesView().tag(2)
                           SettingsView().tag(3)
                       }
                       .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
                       
-                      // Floating Bottom Bar Presisi
+                      // Floating Navigation Bar Presisi
                       HStack(spacing: 6) {
                           ForEach(0..<tabs.count, id: \.self) { idx in
                               let tab = tabs[idx]
@@ -671,8 +678,11 @@ jobs:
               }
           }
 
+          // MARK: - Tab Projects
           struct ProjectsView: View {
               @EnvironmentObject var state: AppStateManager
+              var onGoToSettings: () -> Void
+              
               @State private var showDocPicker = false
               @State private var showTweakPicker = false
               
@@ -689,17 +699,51 @@ jobs:
                                       .foregroundColor(.gray)
                               }
                               Spacer()
-                              Text("CORE READY")
+                              Text(state.hasActiveCert ? "CERT READY" : "NO CERT")
                                   .font(.system(size: 10, weight: .bold))
-                                  .foregroundColor(.lcsCyan)
+                                  .foregroundColor(state.hasActiveCert ? .lcsGreen : .orange)
                                   .padding(.horizontal, 10)
                                   .padding(.vertical, 4)
-                                  .background(Color.lcsCyan.opacity(0.15))
+                                  .background((state.hasActiveCert ? Color.lcsGreen : Color.orange).opacity(0.15))
                                   .clipShape(Capsule())
                           }
                           .padding(.horizontal, 20)
                           .padding(.top, 14)
 
+                          // 1. Ringkasan Sertifikat Aktif (Bisa diklik untuk buka Settings)
+                          LiquidCard {
+                              HStack(spacing: 12) {
+                                  ZStack {
+                                      Circle()
+                                          .fill((state.hasActiveCert ? Color.lcsGreen : Color.orange).opacity(0.18))
+                                          .frame(width: 40, height: 40)
+                                      Image(systemName: state.hasActiveCert ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                          .foregroundColor(state.hasActiveCert ? .lcsGreen : .orange)
+                                          .font(.system(size: 18))
+                                  }
+                                  
+                                  VStack(alignment: .leading, spacing: 2) {
+                                      Text(state.hasActiveCert ? (state.selectedP12?.lastPathComponent ?? "Certificate Active") : "Sertifikat Belum Diatur")
+                                          .font(.system(size: 13, weight: .bold))
+                                          .foregroundColor(.white)
+                                          .lineLimit(1)
+                                      Text(state.hasActiveCert ? "Siap menandatangani berkas IPA" : "Tap untuk memasang sertifikat di Settings")
+                                          .font(.system(size: 11))
+                                          .foregroundColor(.gray)
+                                  }
+                                  
+                                  Spacer()
+                                  
+                                  Button(action: onGoToSettings) {
+                                      Image(systemName: "chevron.right")
+                                          .foregroundColor(.gray)
+                                          .font(.system(size: 13, weight: .semibold))
+                                  }
+                              }
+                          }
+                          .padding(.horizontal, 16)
+
+                          // 2. Target Application
                           LiquidCard {
                               HStack {
                                   Image(systemName: "app.gift.fill").foregroundColor(.lcsCyan)
@@ -725,6 +769,7 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
+                          // 3. App Configuration
                           LiquidCard {
                               Text("APP CONFIGURATION").font(.system(size: 12, weight: .bold)).foregroundColor(.gray)
                               VStack(spacing: 10) {
@@ -751,6 +796,7 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
+                          // 4. Suntik Tweak
                           LiquidCard {
                               HStack {
                                   Image(systemName: "puzzlepiece.extension.fill").foregroundColor(.orange)
@@ -782,6 +828,7 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
+                          // 5. Options
                           LiquidCard {
                               Text("OPTIONS").font(.system(size: 12, weight: .bold)).foregroundColor(.gray)
                               ToggleOpt(title: "Enable File Access", sub: "Buka berkas di Files app", isOn: $state.enableFileAccess, tint: .blue)
@@ -792,6 +839,7 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
+                          // Tombol Eksekusi
                           Button(action: { state.startProcessing() }) {
                               HStack(spacing: 8) {
                                   Image(systemName: "signature").font(.system(size: 16, weight: .bold))
@@ -838,6 +886,7 @@ jobs:
               }
           }
 
+          // MARK: - Tab Apps
           struct AppsView: View {
               @EnvironmentObject var state: AppStateManager
               var body: some View {
@@ -916,6 +965,7 @@ jobs:
               }
           }
 
+          // MARK: - Tab Files
           struct FilesView: View {
               @EnvironmentObject var state: AppStateManager
               var body: some View {
@@ -962,32 +1012,131 @@ jobs:
               }
           }
 
+          // MARK: - Tab Settings (Kredensial Sertifikat Aktif)
           struct SettingsView: View {
               @EnvironmentObject var state: AppStateManager
+              @State private var showP12Picker = false
+              @State private var showProvPicker = false
+              
               var body: some View {
                   ScrollView {
                       VStack(spacing: 16) {
-                          Text("Settings").font(.system(size: 24, weight: .bold)).foregroundColor(.white).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.top, 16)
+                          Text("Settings")
+                              .font(.system(size: 24, weight: .bold))
+                              .foregroundColor(.white)
+                              .frame(maxWidth: .infinity, alignment: .leading)
+                              .padding(.horizontal, 20)
+                              .padding(.top, 16)
                           
+                          // 1. KARTU MANAJEMEN SERTIFIKAT UTAMA (LCSign Aesthetic)
+                          LiquidCard {
+                              HStack {
+                                  Image(systemName: "checkmark.shield.fill")
+                                      .foregroundColor(state.hasActiveCert ? .lcsGreen : .lcsCyan)
+                                  Text("CERTIFICATE MANAGEMENT")
+                                      .font(.system(size: 12, weight: .bold))
+                                      .foregroundColor(.gray)
+                                  Spacer()
+                                  Text(state.hasActiveCert ? "ACTIVE" : "INCOMPLETE")
+                                      .font(.system(size: 10, weight: .bold))
+                                      .foregroundColor(state.hasActiveCert ? .lcsGreen : .orange)
+                                      .padding(.horizontal, 8)
+                                      .padding(.vertical, 3)
+                                      .background((state.hasActiveCert ? Color.lcsGreen : Color.orange).opacity(0.15))
+                                      .clipShape(Capsule())
+                              }
+                              
+                              VStack(spacing: 12) {
+                                  // P12 File Row
+                                  HStack {
+                                      VStack(alignment: .leading, spacing: 2) {
+                                          Text("P12 Certificate")
+                                              .font(.system(size: 13, weight: .semibold))
+                                              .foregroundColor(.white)
+                                          Text(state.selectedP12?.lastPathComponent ?? "Belum ada file .p12")
+                                              .font(.system(size: 11))
+                                              .foregroundColor(.gray)
+                                              .lineLimit(1)
+                                      }
+                                      Spacer()
+                                      Button(action: { showP12Picker = true }) {
+                                          Text(state.selectedP12 == nil ? "Pilih" : "Ganti")
+                                              .font(.system(size: 11, weight: .bold))
+                                              .foregroundColor(.black)
+                                              .padding(.horizontal, 12)
+                                              .padding(.vertical, 5)
+                                              .background(Color.lcsCyan)
+                                              .clipShape(Capsule())
+                                      }
+                                  }
+                                  
+                                  Divider().background(Color.white.opacity(0.06))
+                                  
+                                  // Provision Profile Row
+                                  HStack {
+                                      VStack(alignment: .leading, spacing: 2) {
+                                          Text("Provisioning Profile")
+                                              .font(.system(size: 13, weight: .semibold))
+                                              .foregroundColor(.white)
+                                          Text(state.selectedProvision?.lastPathComponent ?? "Belum ada file .mobileprovision")
+                                              .font(.system(size: 11))
+                                              .foregroundColor(.gray)
+                                              .lineLimit(1)
+                                      }
+                                      Spacer()
+                                      Button(action: { showProvPicker = true }) {
+                                          Text(state.selectedProvision == nil ? "Pilih" : "Ganti")
+                                              .font(.system(size: 11, weight: .bold))
+                                              .foregroundColor(.black)
+                                              .padding(.horizontal, 12)
+                                              .padding(.vertical, 5)
+                                              .background(Color.lcsCyan)
+                                              .clipShape(Capsule())
+                                      }
+                                  }
+                                  
+                                  Divider().background(Color.white.opacity(0.06))
+                                  
+                                  // P12 Password Field
+                                  HStack {
+                                      Text("Password:")
+                                          .font(.system(size: 13, weight: .medium))
+                                          .foregroundColor(.gray)
+                                          .frame(width: 80, alignment: .leading)
+                                      TextField("Password P12", text: $state.p12Password)
+                                          .foregroundColor(.white)
+                                          .font(.system(size: 13, design: .monospaced))
+                                  }
+                              }
+                              .padding(12)
+                              .background(Color.white.opacity(0.03))
+                              .cornerRadius(14)
+                          }
+                          .padding(.horizontal, 16)
+                          
+                          // 2. Info Engine
                           LiquidCard {
                               Text("iBaalSign Core Engine").font(.system(size: 14, weight: .bold)).foregroundColor(.white)
-                              Text("Dirancang untuk modifikasi berkas IPA, suntik Dylib ke Frameworks, dan ekspor langsung via Share Sheet tanpa ketergantungan TrollStore.")
+                              Text("Sertifikat yang kamu pasang di sini akan otomatis digunakan oleh tab Projects saat memproses penandatanganan dan injeksi berkas IPA.")
                                   .font(.system(size: 12)).foregroundColor(.gray)
                           }
                           .padding(.horizontal, 16)
                           
+                          // 3. Tombol Pembersih Cache
                           Button(action: {
                               let fm = FileManager.default
                               guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
                               if let items = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
                                   for itm in items { try? fm.removeItem(at: itm) }
                               }
+                              state.selectedP12 = nil
+                              state.selectedProvision = nil
                               state.refreshAll()
-                              state.showAlert(title: "Bersih!", message: "Semua data lokal telah dibersihkan.")
+                              state.showAlert(title: "Bersih!", message: "Semua file lokal & sertifikat telah di-reset.")
                           }) {
                               HStack {
                                   Image(systemName: "trash.fill")
-                                  Text("Hapus Seluruh Cache & Data").font(.system(size: 13, weight: .bold))
+                                  Text("Hapus Seluruh Cache & Sertifikat").font(.system(size: 13, weight: .bold))
                               }
                               .foregroundColor(.red)
                               .frame(maxWidth: .infinity)
@@ -1001,6 +1150,18 @@ jobs:
                       }
                   }
                   .background(Color.lcsOled.ignoresSafeArea())
+                  .sheet(isPresented: $showP12Picker) {
+                      GenericDocPicker(types: [.data, .item]) { picked in
+                          state.selectedP12 = picked
+                          state.showAlert(title: "P12 Terpilih! 🔑", message: picked.lastPathComponent)
+                      }
+                  }
+                  .sheet(isPresented: $showProvPicker) {
+                      GenericDocPicker(types: [.data, .item]) { picked in
+                          state.selectedProvision = picked
+                          state.showAlert(title: "Provision Terpilih! 📄", message: picked.lastPathComponent)
+                      }
+                  }
               }
           }
 
@@ -1025,7 +1186,7 @@ jobs:
           }
           EOF
 
-          # 7. Konfigurasi XcodeGen dengan Pustaka ZIPFoundation
+          # 7. Konfigurasi XcodeGen
           cat << 'EOF' > project.yml
           name: iBaalSign
           options:
@@ -1045,8 +1206,8 @@ jobs:
                 - package: ZIPFoundation
               settings:
                 PRODUCT_BUNDLE_IDENTIFIER: com.ibaalpremium.ibaalsign
-                MARKETING_VERSION: "2.1"
-                CURRENT_PROJECT_VERSION: "4"
+                MARKETING_VERSION: "2.2"
+                CURRENT_PROJECT_VERSION: "5"
                 SWIFT_VERSION: "5.0"
                 GENERATE_INFOPLIST_FILE: "YES"
                 INFOPLIST_KEY_UILaunchStoryboardName: "LaunchScreen"
@@ -1112,5 +1273,5 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: iBaalSign-v2.1-IPA
+          name: iBaalSign-v2.2-IPA
           path: iBaalSign.ipa
