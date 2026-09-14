@@ -24,23 +24,23 @@ jobs:
 
       - name: Generate App Icon & Assets
         run: |
-          pip3 install pillow
+          pip3 install pillow --break-system-packages
           python3 - << 'EOF'
           from PIL import Image, ImageDraw
           import os, json
 
-          # Canvas Icon 1024x1024
+          # Kanvas Ikon Ukuran 1024x1024
           img = Image.new("RGBA", (1024, 1024))
           draw = ImageDraw.Draw(img)
 
-          # Background Gradient (OLED Black to Deep Indigo)
+          # Gradasi Latar Belakang (OLED Black ke Deep Indigo)
           for y in range(1024):
               r = int(12 + (20 - 12) * (y / 1024))
               g = int(14 + (28 - 14) * (y / 1024))
               b = int(24 + (55 - 24) * (y / 1024))
               draw.line([(0, y), (1024, y)], fill=(r, g, b, 255))
 
-          # Lingkaran Cahaya Liquid Cyan
+          # Efek Lingkaran Cahaya Liquid Cyan
           draw.ellipse([262, 262, 762, 762], fill=(0, 210, 255, 35), outline=(0, 220, 255, 180), width=6)
           
           # Simbol Signature / Pen Signer (Minimalis Liquid Tech)
@@ -64,7 +64,7 @@ jobs:
         run: |
           mkdir -p Sources
 
-          # 1. Native LaunchScreen Storyboard (No Zoom)
+          # 1. Native LaunchScreen Storyboard (Mencegah tampilan nge-zoom)
           cat << 'EOF' > Sources/LaunchScreen.storyboard
           <?xml version="1.0" encoding="UTF-8"?>
           <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="22505" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
@@ -191,7 +191,7 @@ jobs:
           }
           EOF
 
-          # 3. Entry Point App dengan URL Handler
+          # 3. Entry Point App
           cat << 'EOF' > Sources/iBaalSignApp.swift
           import SwiftUI
 
@@ -216,7 +216,6 @@ jobs:
           import SwiftUI
           import UniformTypeIdentifiers
 
-          // MARK: - Palet Warna Liquid LCSign
           extension Color {
               static let lcsDark = Color(red: 0.05, green: 0.06, blue: 0.08)
               static let lcsCard = Color(red: 0.10, green: 0.11, blue: 0.14)
@@ -225,7 +224,6 @@ jobs:
               static let lcsGreen = Color(red: 0.20, green: 0.82, blue: 0.45)
           }
 
-          // MARK: - Komponen Pill Badge Status
           struct StatusBadge: View {
               let text: String
               let tint: Color
@@ -240,7 +238,6 @@ jobs:
               }
           }
 
-          // MARK: - Kartu Frosted Glass
           struct LiquidCard<Content: View>: View {
               let content: Content
               init(@ViewBuilder content: () -> Content) { self.content = content() }
@@ -257,7 +254,6 @@ jobs:
               }
           }
 
-          // MARK: - Tampilan Utama Beranda & Projects
           struct MainTabView: View {
               @EnvironmentObject var state: AppStateManager
               @State private var currentTab = 0
@@ -278,7 +274,6 @@ jobs:
                       }
                       .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
                       
-                      // Floating Bottom Bar (Mirip LCSign)
                       HStack {
                           BarButton(icon: "cube.box.fill", name: "Projects", isSelected: currentTab == 0) { currentTab = 0 }
                           BarButton(icon: "square.stack.3d.up.fill", name: "Apps", isSelected: currentTab == 1) { currentTab = 1 }
@@ -318,7 +313,6 @@ jobs:
               }
           }
 
-          // MARK: - Tab Projects & App Configuration
           struct ProjectsView: View {
               @EnvironmentObject var state: AppStateManager
               @State private var showDocPicker = false
@@ -327,7 +321,6 @@ jobs:
               var body: some View {
                   ScrollView {
                       VStack(spacing: 16) {
-                          // Top Bar
                           HStack {
                               VStack(alignment: .leading, spacing: 2) {
                                   Text("iBaalSign")
@@ -343,7 +336,6 @@ jobs:
                           .padding(.horizontal, 20)
                           .padding(.top, 10)
 
-                          // 1. Target Application
                           LiquidCard {
                               HStack {
                                   Image(systemName: "app.gift.fill")
@@ -373,7 +365,6 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
-                          // 2. App Configuration (Modify Name, Bundle ID, Version)
                           LiquidCard {
                               Text("APP CONFIGURATION")
                                   .font(.system(size: 12, weight: .bold))
@@ -414,7 +405,6 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
-                          // 3. Tweak Injection Section (.dylib / .deb)
                           LiquidCard {
                               HStack {
                                   Image(systemName: "puzzlepiece.extension.fill")
@@ -464,7 +454,6 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
-                          // 4. Advanced Toggles
                           LiquidCard {
                               Text("OPTIONS & TOGGLES")
                                   .font(.system(size: 12, weight: .bold))
@@ -482,9 +471,8 @@ jobs:
                           }
                           .padding(.horizontal, 16)
 
-                          // Action Button
                           Button(action: {
-                              state.showAlert(title: "Konfigurasi Disimpan!", message: "Target: \(state.appName)\nBundle ID: \(state.bundleID)\nTweaks: \(state.injectedTweaks.count) file siap disuntik.\n\n(Mesin Signing zsign C++ akan dieksekusi di Modul 2!)")
+                              state.showAlert(title: "Konfigurasi Disimpan!", message: "Target: \(state.appName)\nBundle ID: \(state.bundleID)\nTweaks: \(state.injectedTweaks.count) file siap disuntik.\n\n(Mesin Signing zsign C++ siap disambungkan di Modul 2!)")
                           }) {
                               HStack {
                                   Image(systemName: "signature")
@@ -542,7 +530,6 @@ jobs:
               }
           }
 
-          // MARK: - Tab Apps
           struct AppsView: View {
               @EnvironmentObject var state: AppStateManager
               var body: some View {
@@ -563,7 +550,6 @@ jobs:
               }
           }
 
-          // MARK: - Tab Files
           struct FilesView: View {
               @EnvironmentObject var state: AppStateManager
               
@@ -643,7 +629,6 @@ jobs:
               }
           }
 
-          // MARK: - Tab Settings
           struct SettingsView: View {
               @EnvironmentObject var state: AppStateManager
               var body: some View {
@@ -695,7 +680,6 @@ jobs:
               }
           }
 
-          // MARK: - Picker Representable
           struct GenericDocPicker: UIViewControllerRepresentable {
               let types: [UTType]
               let onPick: (URL) -> Void
@@ -719,7 +703,7 @@ jobs:
           }
           EOF
 
-          # 5. Project YAML Configuration (Dengan Document Types untuk Share Sheet Telegram)
+          # 5. Konfigurasi XcodeGen
           cat << 'EOF' > project.yml
           name: iBaalSign
           options:
@@ -769,20 +753,19 @@ jobs:
           mkdir -p Payload
           cp -r ./build_output/Build/Products/Release-iphoneos/iBaalSign.app Payload/
 
-          # INJEKSI DOKUMEN TYPE SHARE SHEET TELEGRAM KE INFO.PLIST
           PLIST="Payload/iBaalSign.app/Info.plist"
           
-          # Daftarkan penanganan file .ipa, .dylib, .deb, .zip, .p12, .mobileprovision
+          # Injeksi Document Types agar aplikasi muncul saat tombol Share ditekan di Telegram/Files
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes array" "$PLIST" 2>/dev/null || true
-          
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string 'Package File'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string 'All Packages'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string 'Viewer'" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string 'Owner'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string 'Alternate'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string 'public.data'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string 'public.archive'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:2 string 'public.content'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:3 string 'public.item'" "$PLIST"
 
           chmod +x Payload/iBaalSign.app/iBaalSign
           ldid -S Payload/iBaalSign.app/iBaalSign
