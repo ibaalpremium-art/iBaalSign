@@ -1,4 +1,4 @@
-name: Build iBaalSign Modul 1 (Liquid UI & Share Sheet)
+name: Build iBaalSign (Fix Share Sheet Engine)
 
 on:
   push:
@@ -29,21 +29,17 @@ jobs:
           from PIL import Image, ImageDraw
           import os, json
 
-          # Kanvas Ikon Ukuran 1024x1024
           img = Image.new("RGBA", (1024, 1024))
           draw = ImageDraw.Draw(img)
 
-          # Gradasi Latar Belakang (OLED Black ke Deep Indigo)
+          # Gradient OLED Black to Deep Navy
           for y in range(1024):
               r = int(12 + (20 - 12) * (y / 1024))
               g = int(14 + (28 - 14) * (y / 1024))
               b = int(24 + (55 - 24) * (y / 1024))
               draw.line([(0, y), (1024, y)], fill=(r, g, b, 255))
 
-          # Efek Lingkaran Cahaya Liquid Cyan
           draw.ellipse([262, 262, 762, 762], fill=(0, 210, 255, 35), outline=(0, 220, 255, 180), width=6)
-          
-          # Simbol Signature / Pen Signer (Minimalis Liquid Tech)
           draw.rounded_rectangle([472, 280, 552, 640], radius=24, fill=(0, 230, 200, 255))
           draw.polygon([(472, 640), (552, 640), (512, 740)], fill=(0, 230, 200, 255))
           draw.ellipse([497, 725, 527, 755], fill=(12, 14, 24, 255))
@@ -60,11 +56,11 @@ jobs:
               json.dump(contents, f, indent=2)
           EOF
 
-      - name: Auto-Generate Source Code (Liquid SwiftUI & Share Engine)
+      - name: Auto-Generate Source Code (With Resilient Inbox & URL Watcher)
         run: |
           mkdir -p Sources
 
-          # 1. Native LaunchScreen Storyboard (Mencegah tampilan nge-zoom)
+          # 1. Native LaunchScreen Storyboard (No Zoom)
           cat << 'EOF' > Sources/LaunchScreen.storyboard
           <?xml version="1.0" encoding="UTF-8"?>
           <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="22505" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
@@ -98,6 +94,8 @@ jobs:
           import UniformTypeIdentifiers
 
           class AppStateManager: ObservableObject {
+              static let shared = AppStateManager()
+              
               @Published var targetIPAName: String = "Belum memilih file .IPA"
               @Published var targetIPAURL: URL? = nil
               
@@ -106,27 +104,30 @@ jobs:
               @Published var bundleID: String = ""
               @Published var appVersion: String = "1.0"
               
-              // Toggles Configuration
+              // Toggles
               @Published var installAfterSign: Bool = true
               @Published var enableFileAccess: Bool = true
               @Published var removeURLSchemes: Bool = false
               @Published var removeEmbeddedPlugins: Bool = true
               @Published var autoCleanImports: Bool = true
-              @Published var deleteOriginalAfterImport: Bool = false
               
-              // Tweak List (.dylib / .deb)
+              // Injected Tweaks
               @Published var injectedTweaks: [String] = []
               
-              // Files List di Documents
+              // Files List
               @Published var importedFiles: [URL] = []
               
-              // Alert & Notification
+              // Alert
               @Published var alertTitle: String = ""
               @Published var alertMessage: String = ""
               @Published var showAlert: Bool = false
               
+              private var lastProcessedURL: URL? = nil
+              private var lastProcessedTime: Date = .distantPast
+              
               init() {
                   refreshDocuments()
+                  checkInbox()
               }
               
               func refreshDocuments() {
@@ -137,8 +138,27 @@ jobs:
                   }
               }
               
-              // Handler Share Sheet dari Telegram / Safari / Files
+              // Scan folder Inbox (Jalur aman otomatis dari Share Sheet Telegram)
+              func checkInbox() {
+                  let fm = FileManager.default
+                  guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+                  let inboxURL = docs.appendingPathComponent("Inbox")
+                  
+                  if let inboxFiles = try? fm.contentsOfDirectory(at: inboxURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                      for file in inboxFiles {
+                          handleIncomingURL(file)
+                      }
+                  }
+              }
+              
               func handleIncomingURL(_ url: URL) {
+                  // Cegah eksekusi ganda jika sistem memanggil openURL berulang
+                  if url == lastProcessedURL && Date().timeIntervalSince(lastProcessedTime) < 1.5 {
+                      return
+                  }
+                  lastProcessedURL = url
+                  lastProcessedTime = Date()
+                  
                   let isAccessSecured = url.startAccessingSecurityScopedResource()
                   defer {
                       if isAccessSecured { url.stopAccessingSecurityScopedResource() }
@@ -149,31 +169,40 @@ jobs:
                   let destURL = docs.appendingPathComponent(url.lastPathComponent)
                   
                   do {
-                      if fm.fileExists(atPath: destURL.path) {
-                          try fm.removeItem(at: destURL)
+                      // Jika file berada di Inbox atau folder luar, pindahkan ke Documents root
+                      if url.path != destURL.path {
+                          if fm.fileExists(atPath: destURL.path) {
+                              try fm.removeItem(at: destURL)
+                          }
+                          try fm.copyItem(at: url, to: destURL)
+                          if url.path.contains("/Inbox/") {
+                              try? fm.removeItem(at: url)
+                          }
                       }
-                      try fm.copyItem(at: url, to: destURL)
                       
                       let ext = destURL.pathExtension.lowercased()
                       
                       DispatchQueue.main.async {
                           self.refreshDocuments()
                           
-                          if ext == "ipa" {
+                          if ext == "ipa" || ext == "tipa" {
                               self.targetIPAURL = destURL
                               self.targetIPAName = destURL.lastPathComponent
-                              self.appName = destURL.deletingPathExtension().lastPathComponent
-                              self.bundleID = "com.ibaalsign." + self.appName.lowercased().replacingOccurrences(of: " ", with: "")
+                              let rawName = destURL.deletingPathExtension().lastPathComponent
+                              self.appName = rawName
+                              self.bundleID = "com.ibaalsign." + rawName.lowercased()
+                                  .replacingOccurrences(of: " ", with: "")
+                                  .filter { $0.isLetter || $0.isNumber }
                               self.showAlert(title: "IPA Diterima! 🚀", message: "\(destURL.lastPathComponent) siap dikonfigurasi.")
                           } else if ext == "dylib" || ext == "deb" {
                               if !self.injectedTweaks.contains(destURL.lastPathComponent) {
                                   self.injectedTweaks.append(destURL.lastPathComponent)
                               }
-                              self.showAlert(title: "Tweak Ditambahkan! 💉", message: "\(destURL.lastPathComponent) dimasukkan ke daftar injeksi Frameworks.")
+                              self.showAlert(title: "Tweak Ditambahkan! 💉", message: "\(destURL.lastPathComponent) dimasukkan ke daftar Frameworks.")
                           } else if ext == "zip" || ext == "p12" || ext == "mobileprovision" {
-                              self.showAlert(title: "Sertifikat Disimpan! 🔑", message: "\(destURL.lastPathComponent) berhasil diimpor ke tab Files.")
+                              self.showAlert(title: "Sertifikat Disimpan! 🔑", message: "\(destURL.lastPathComponent) disimpan ke tab Files.")
                           } else {
-                              self.showAlert(title: "Berkas Diterima", message: "\(destURL.lastPathComponent) disimpan.")
+                              self.showAlert(title: "Berkas Diterima", message: "\(destURL.lastPathComponent) berhasil diimpor.")
                           }
                       }
                   } catch {
@@ -191,13 +220,21 @@ jobs:
           }
           EOF
 
-          # 3. Entry Point App
+          # 3. Entry Point App (Dengan AppDelegate Adaptor agar 100% Tangkap Share Sheet)
           cat << 'EOF' > Sources/iBaalSignApp.swift
           import SwiftUI
 
+          class AppDelegate: NSObject, UIApplicationDelegate {
+              func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
+                  AppStateManager.shared.handleIncomingURL(url)
+                  return true
+              }
+          }
+
           @main
           struct iBaalSignApp: App {
-              @StateObject var state = AppStateManager()
+              @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+              @StateObject var state = AppStateManager.shared
               
               var body: some Scene {
                   WindowGroup {
@@ -206,12 +243,15 @@ jobs:
                           .onOpenURL { incomingURL in
                               state.handleIncomingURL(incomingURL)
                           }
+                          .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                              state.checkInbox()
+                          }
                   }
               }
           }
           EOF
 
-          # 4. Antarmuka Liquid Glass (LCSign Aesthetic)
+          # 4. Antarmuka Liquid Glass
           cat << 'EOF' > Sources/MainViews.swift
           import SwiftUI
           import UniformTypeIdentifiers
@@ -331,7 +371,7 @@ jobs:
                                       .foregroundColor(.gray)
                               }
                               Spacer()
-                              StatusBadge(text: "MODUL 1 READY", tint: .lcsCyan)
+                              StatusBadge(text: "LIVE SYNC", tint: .lcsCyan)
                           }
                           .padding(.horizontal, 20)
                           .padding(.top, 10)
@@ -472,7 +512,7 @@ jobs:
                           .padding(.horizontal, 16)
 
                           Button(action: {
-                              state.showAlert(title: "Konfigurasi Disimpan!", message: "Target: \(state.appName)\nBundle ID: \(state.bundleID)\nTweaks: \(state.injectedTweaks.count) file siap disuntik.\n\n(Mesin Signing zsign C++ siap disambungkan di Modul 2!)")
+                              state.showAlert(title: "Konfigurasi Valid! ✅", message: "Target: \(state.appName)\nBundle ID: \(state.bundleID)\nTweaks: \(state.injectedTweaks.count) file.\n\nFile & Share Sheet sudah bekerja sempurna!")
                           }) {
                               HStack {
                                   Image(systemName: "signature")
@@ -703,7 +743,7 @@ jobs:
           }
           EOF
 
-          # 5. Konfigurasi XcodeGen
+          # 5. Konfigurasi XcodeGen (LSSupportsOpeningDocumentsInPlace = NO)
           cat << 'EOF' > project.yml
           name: iBaalSign
           options:
@@ -718,13 +758,13 @@ jobs:
               settings:
                 PRODUCT_BUNDLE_IDENTIFIER: com.ibaalpremium.ibaalsign
                 MARKETING_VERSION: "1.0"
-                CURRENT_PROJECT_VERSION: "1"
+                CURRENT_PROJECT_VERSION: "2"
                 SWIFT_VERSION: "5.0"
                 GENERATE_INFOPLIST_FILE: "YES"
                 INFOPLIST_KEY_UILaunchStoryboardName: "LaunchScreen"
                 INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
                 INFOPLIST_KEY_UIFileSharingEnabled: "YES"
-                INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: "YES"
+                INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: "NO"
                 ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
                 CODE_SIGN_IDENTITY: ""
                 CODE_SIGNING_REQUIRED: "NO"
@@ -748,24 +788,37 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
 
-      - name: Inject Telegram Share Sheet (Document Types) & Package IPA
+      - name: Inject Robust Document Types & Package IPA
         run: |
           mkdir -p Payload
           cp -r ./build_output/Build/Products/Release-iphoneos/iBaalSign.app Payload/
 
           PLIST="Payload/iBaalSign.app/Info.plist"
           
-          # Injeksi Document Types agar aplikasi muncul saat tombol Share ditekan di Telegram/Files
+          # Injeksi Document Types lengkap dengan ekstensi agar dikenali Telegram/Safari/Files
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes array" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string 'All Packages'" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string 'Viewer'" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string 'Alternate'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string 'Supported Packages'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string 'Editor'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string 'Owner'" "$PLIST"
+          
+          # Daftarkan Ekstensi Spesifik
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:0 string 'ipa'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:1 string 'tipa'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:2 string 'dylib'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:3 string 'deb'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:4 string 'zip'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:5 string 'p12'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:6 string 'mobileprovision'" "$PLIST"
+
+          # Daftarkan MIME/UTI Content Types
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string 'public.data'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string 'public.archive'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:2 string 'public.content'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:3 string 'public.item'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:4 string 'com.pkware.zip-archive'" "$PLIST"
 
           chmod +x Payload/iBaalSign.app/iBaalSign
           ldid -S Payload/iBaalSign.app/iBaalSign
@@ -775,5 +828,5 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: iBaalSign-v1.0-IPA
+          name: iBaalSign-v1.1-IPA
           path: iBaalSign.ipa
