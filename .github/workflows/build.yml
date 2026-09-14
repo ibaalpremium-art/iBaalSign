@@ -1,4 +1,4 @@
-name: Build iBaalSign Modul 2 (Liquid Glass & Signing Engine)
+name: Build iBaalSign (Fix Liquid Pill Layout)
 
 on:
   push:
@@ -32,14 +32,12 @@ jobs:
           img = Image.new("RGBA", (1024, 1024))
           draw = ImageDraw.Draw(img)
 
-          # Background Gradient OLED Black to Deep Midnight
           for y in range(1024):
               r = int(10 + (18 - 10) * (y / 1024))
               g = int(12 + (24 - 12) * (y / 1024))
               b = int(20 + (46 - 20) * (y / 1024))
               draw.line([(0, y), (1024, y)], fill=(r, g, b, 255))
 
-          # Liquid Aura
           draw.ellipse([240, 240, 784, 784], fill=(0, 215, 255, 30), outline=(0, 230, 255, 170), width=6)
           draw.rounded_rectangle([470, 260, 554, 650], radius=26, fill=(0, 240, 205, 255))
           draw.polygon([(470, 650), (554, 650), (512, 755)], fill=(0, 240, 205, 255))
@@ -57,11 +55,11 @@ jobs:
               json.dump(contents, f, indent=2)
           EOF
 
-      - name: Auto-Generate Source Code (Liquid Glass & Core Engine)
+      - name: Auto-Generate Source Code (Fixed Liquid Glass UI)
         run: |
           mkdir -p Sources
 
-          # 1. Native LaunchScreen Storyboard
+          # 1. Native LaunchScreen
           cat << 'EOF' > Sources/LaunchScreen.storyboard
           <?xml version="1.0" encoding="UTF-8"?>
           <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="22505" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
@@ -89,7 +87,7 @@ jobs:
           </document>
           EOF
 
-          # 2. Mach-O Dylib Load Command Injector (Pure Swift)
+          # 2. Mach-O Dylib Load Command Injector
           cat << 'EOF' > Sources/MachOInjector.swift
           import Foundation
 
@@ -103,12 +101,7 @@ jobs:
                   
                   var magic: UInt32 = 0
                   (data as NSData).getBytes(&magic, range: NSRange(location: 0, length: 4))
-                  
-                  // MH_MAGIC_64 = 0xfeedfacf
-                  guard magic == 0xfeedfacf else {
-                      print("Bukan Mach-O 64-bit yang valid.")
-                      return false
-                  }
+                  guard magic == 0xfeedfacf else { return false }
                   
                   var ncmds: UInt32 = 0
                   var sizeofcmds: UInt32 = 0
@@ -136,9 +129,7 @@ jobs:
                   newCmd.append(UnsafeBufferPointer(start: &compatVer, count: 1))
                   newCmd.append(contentsOf: pathBytes)
                   
-                  while newCmd.count < Int(alignedCmdSize) {
-                      newCmd.append(0)
-                  }
+                  while newCmd.count < Int(alignedCmdSize) { newCmd.append(0) }
                   
                   let targetOffset = UInt64(32 + sizeofcmds)
                   try? handle.seek(toOffset: targetOffset)
@@ -219,7 +210,7 @@ jobs:
                           }
                           
                           if removeEmbedded {
-                              progress("Membersihkan PlugIns & Extensions...")
+                              progress("Membersihkan PlugIns...")
                               let extensions = ["PlugIns", "Watch", "Extensions"]
                               for ext in extensions {
                                   let extURL = appDir.appendingPathComponent(ext)
@@ -252,13 +243,13 @@ jobs:
                           }
                           
                           if let prov = provisionURL {
-                              progress("Menanamkan embedded.mobileprovision...")
+                              progress("Menanamkan provision profile...")
                               let destProv = appDir.appendingPathComponent("embedded.mobileprovision")
                               if fm.fileExists(atPath: destProv.path) { try? fm.removeItem(at: destProv) }
                               try? fm.copyItem(at: prov, to: destProv)
                           }
                           
-                          progress("Mengemas ulang .IPA baru...")
+                          progress("Mengemas ulang .IPA...")
                           guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else {
                               throw NSError(domain: "iBaalSign", code: 500, userInfo: [NSLocalizedDescriptionKey: "Dokumen direktori tidak tersedia."])
                           }
@@ -504,7 +495,7 @@ jobs:
           }
           EOF
 
-          # 6. Liquid Glass UI & Native Share Sheet
+          # 6. Perbaikan Antarmuka Liquid Glass (Terkunci Presisi di Bawah)
           cat << 'EOF' > Sources/MainViews.swift
           import SwiftUI
           import UniformTypeIdentifiers
@@ -584,55 +575,56 @@ jobs:
                       }
                       .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
                       
-                      // Liquid Glass Floating Navigation Bar
+                      // Floating Bottom Bar Presisi
                       HStack(spacing: 6) {
                           ForEach(0..<tabs.count, id: \.self) { idx in
                               let tab = tabs[idx]
                               let isSelected = currentTab == idx
                               
                               Button {
-                                  withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                                  withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
                                       currentTab = idx
                                   }
                               } label: {
-                                  ZStack {
-                                      if isSelected {
-                                          Capsule()
-                                              .fill(
-                                                  LinearGradient(
-                                                      colors: [Color.lcsCyan.opacity(0.24), Color.lcsAccent.opacity(0.12)],
-                                                      startPoint: .topLeading,
-                                                      endPoint: .bottomTrailing
-                                                  )
-                                              )
-                                              .matchedGeometryEffect(id: "liquidPill", in: tabNamespace)
-                                              .overlay(
-                                                  Capsule().stroke(Color.lcsCyan.opacity(0.65), lineWidth: 1)
-                                              )
-                                              .shadow(color: Color.lcsCyan.opacity(0.4), radius: 10, y: 2)
-                                      }
+                                  VStack(spacing: 3) {
+                                      Image(systemName: tab.0)
+                                          .font(.system(size: isSelected ? 17 : 15, weight: isSelected ? .bold : .regular))
+                                          .foregroundColor(isSelected ? .lcsCyan : .gray)
                                       
-                                      VStack(spacing: 3) {
-                                          Image(systemName: tab.0)
-                                              .font(.system(size: isSelected ? 17 : 15, weight: isSelected ? .bold : .regular))
-                                              .scaleEffect(isSelected ? 1.15 : 1.0)
-                                              .foregroundColor(isSelected ? .lcsCyan : .gray)
-                                          
-                                          Text(tab.1)
-                                              .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                                              .foregroundColor(isSelected ? .white : .gray.opacity(0.8))
-                                      }
-                                      .padding(.vertical, 8)
-                                      .frame(maxWidth: .infinity)
+                                      Text(tab.1)
+                                          .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                                          .foregroundColor(isSelected ? .white : .gray.opacity(0.8))
                                   }
+                                  .frame(maxWidth: .infinity)
+                                  .frame(height: 48)
+                                  .background(
+                                      ZStack {
+                                          if isSelected {
+                                              Capsule()
+                                                  .fill(
+                                                      LinearGradient(
+                                                          colors: [Color.lcsCyan.opacity(0.25), Color.lcsAccent.opacity(0.12)],
+                                                          startPoint: .topLeading,
+                                                          endPoint: .bottomTrailing
+                                                      )
+                                                  )
+                                                  .matchedGeometryEffect(id: "liquidPill", in: tabNamespace)
+                                                  .overlay(
+                                                      Capsule().stroke(Color.lcsCyan.opacity(0.65), lineWidth: 1)
+                                                  )
+                                                  .shadow(color: Color.lcsCyan.opacity(0.4), radius: 8, y: 2)
+                                          }
+                                      }
+                                  )
                               }
                               .buttonStyle(PlainButtonStyle())
                           }
                       }
                       .padding(6)
+                      .frame(height: 60)
                       .background(
                           Capsule()
-                              .fill(Color(red: 0.08, green: 0.09, blue: 0.14).opacity(0.88))
+                              .fill(Color(red: 0.08, green: 0.09, blue: 0.14).opacity(0.92))
                               .background(Capsule().fill(Color.white.opacity(0.04)).blur(radius: 20))
                       )
                       .overlay(
@@ -647,7 +639,7 @@ jobs:
                       )
                       .shadow(color: Color.black.opacity(0.6), radius: 24, y: 12)
                       .padding(.horizontal, 20)
-                      .padding(.bottom, 12)
+                      .padding(.bottom, 10)
                       
                       // HUD Indikator Proses
                       if state.isProcessing {
@@ -817,7 +809,7 @@ jobs:
                           .padding(.horizontal, 16)
                           .padding(.top, 4)
 
-                          Spacer().frame(height: 100)
+                          Spacer().frame(height: 110)
                       }
                   }
                   .sheet(isPresented: $showDocPicker) {
@@ -916,7 +908,7 @@ jobs:
                                   }
                               }
                               .padding(.horizontal, 16)
-                              .padding(.bottom, 100)
+                              .padding(.bottom, 110)
                           }
                       }
                   }
@@ -1005,7 +997,7 @@ jobs:
                           }
                           .padding(.horizontal, 16)
                           
-                          Spacer().frame(height: 100)
+                          Spacer().frame(height: 110)
                       }
                   }
                   .background(Color.lcsOled.ignoresSafeArea())
@@ -1053,8 +1045,8 @@ jobs:
                 - package: ZIPFoundation
               settings:
                 PRODUCT_BUNDLE_IDENTIFIER: com.ibaalpremium.ibaalsign
-                MARKETING_VERSION: "2.0"
-                CURRENT_PROJECT_VERSION: "3"
+                MARKETING_VERSION: "2.1"
+                CURRENT_PROJECT_VERSION: "4"
                 SWIFT_VERSION: "5.0"
                 GENERATE_INFOPLIST_FILE: "YES"
                 INFOPLIST_KEY_UILaunchStoryboardName: "LaunchScreen"
@@ -1120,5 +1112,5 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: iBaalSign-v2.0-IPA
+          name: iBaalSign-v2.1-IPA
           path: iBaalSign.ipa
